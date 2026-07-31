@@ -40,7 +40,7 @@ class ShowInKitsu(LauncherAction):
                 "Show in Kitsu unavailable",
                 message,
             )
-            return
+            raise RuntimeError("Show in Kitsu unavailable.")
 
         # Define URL
         url = self.get_url(project, folder, task)
