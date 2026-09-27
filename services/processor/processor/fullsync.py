@@ -31,15 +31,47 @@ def get_assets(
 def get_tasks(
     kitsu_project_id: str,
     task_types: dict[str, str],
-    task_statuses: dict[str, str]
+    task_statuses: dict[str, str],
+    persons: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
+    """Collect tasks for a Kitsu project and attach assignee emails.
+
+    Args:
+        kitsu_project_id: The Kitsu project id.
+        task_types: Mapping of task type id -> name.
+        task_statuses: Mapping of task status id -> name.
+        persons: Pre-fetched list of Kitsu persons (from
+            ``gazu.person.all_persons()``). Used to build an id -> email
+            lookup so we avoid one ``gazu.person.get_person`` API call per
+            assignee, which previously made the sync hang when a person or
+            email could not be resolved (see issue #143). Falls back to
+            fetching all persons when not provided.
+    """
+    if persons is None:
+        persons = gazu.person.all_persons()
+
+    # Build a fast id -> email lookup once instead of querying Kitsu per
+    # assignee. Persons without an email are simply omitted from the map.
+    email_by_person_id: dict[str, str] = {
+        person["id"]: person["email"]
+        for person in persons
+        if person.get("id") and person.get("email")
+    }
+
     tasks: list[dict[str, str]] = []
     for record in gazu.task.all_tasks_for_project(kitsu_project_id):
-        record["persons"]: list[dict[str, str]] = []
-        for id in record["assignees"]:
-            record["persons"].append({
-                "email": gazu.person.get_person(id)["email"]
-            })
+        record["persons"] = []
+        for person_id in record["assignees"]:
+            email = email_by_person_id.get(person_id)
+            if email is None:
+                # Person or email not found - skip instead of blocking the
+                # whole sync on a failed per-person lookup.
+                logging.debug(
+                    f"No email found for assignee {person_id} on task "
+                    f"{record.get('id')}; skipping this assignee"
+                )
+                continue
+            record["persons"].append({"email": email})
         tasks.append(
             preprocess_task(
                 kitsu_project_id, record, task_types, task_statuses
